@@ -2,19 +2,20 @@
 // MCP front door on Vercel. Claude connects here; tool calls are forwarded to
 // the home-server backend (backend/server.py) with a shared-secret header.
 //
+// Auth: OAuth sign-in (see app/authorize). Clients send "Authorization: Bearer <token>".
+//
 // Env vars (Vercel project settings):
-//   MCP_KEY          random string; clients must call /api/mcp?key=<MCP_KEY>
+//   MCP_KEY          random string (32+ chars); the passphrase you type at sign-in
 //   BACKEND_URL      public tunnel URL of the home server, no trailing slash
 //   BACKEND_SECRET   same value as BACKEND_SECRET on the home server
 //
 // Versions: mcp-handler@^1, @modelcontextprotocol/sdk@1.26.0, zod@^3
 import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
-import { timingSafeEqual } from "node:crypto";
+import { origin, verify } from "@/lib/oauth";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "";
 const BACKEND_SECRET = process.env.BACKEND_SECRET ?? "";
-const MCP_KEY = process.env.MCP_KEY ?? "";
 
 type ToolResult = {
   content: { type: "text"; text: string }[];
@@ -117,14 +118,20 @@ const handler = createMcpHandler(
   },
 );
 
-function authorized(req: Request): boolean {
-  if (!MCP_KEY || MCP_KEY.length < 32) return false; // refuse to run with a weak key
-  const given = Buffer.from(new URL(req.url).searchParams.get("key") ?? "");
-  const want = Buffer.from(MCP_KEY);
-  return given.length === want.length && timingSafeEqual(given, want);
+function hasValidToken(req: Request): boolean {
+  const m = /^Bearer (.+)$/i.exec(req.headers.get("authorization") ?? "");
+  return !!verify(m?.[1], "at");
 }
 
-const guarded = (req: Request) =>
-  authorized(req) ? handler(req) : new Response("Not found", { status: 404 });
+const guarded = (req: Request) => {
+  if (hasValidToken(req)) return handler(req);
+  return new Response(JSON.stringify({ error: "unauthorized" }), {
+    status: 401,
+    headers: {
+      "content-type": "application/json",
+      "www-authenticate": `Bearer resource_metadata="${origin(req)}/.well-known/oauth-protected-resource"`,
+    },
+  });
+};
 
 export { guarded as GET, guarded as POST, guarded as DELETE };
