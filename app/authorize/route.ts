@@ -41,7 +41,12 @@ ${error ? `<p class="err">${esc(error)}</p>` : ""}
 <button type="submit">Allow access</button></form></body></html>`;
   return new Response(html, {
     status,
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+        headers: {
+         "content-type": "text/html; charset=utf-8",
+         "cache-control": "no-store",
+         "x-frame-options": "DENY",
+         "content-security-policy": "frame-ancestors 'none'",
+       },
   });
 }
 
